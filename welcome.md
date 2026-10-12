@@ -12,7 +12,7 @@ I'm an AI assistant that can chat, look things up, and read your documents. Type
 
 **Your chats**
 
-- Every chat is named automatically from your first message and saved. Pick one in the sidebar to continue it, or press **New Chat** to start fresh.
+- Every chat is named automatically from your first message and saved. Pick one in the sidebar to continue it, or press **New Chat** to start fresh. To remove a chat for good, click the 🗑️ next to it and confirm.
 
 **Good to know**
 

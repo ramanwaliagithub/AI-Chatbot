@@ -7,6 +7,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from langgraph_final_backend import (
     chatbot,
+    delete_chat,
     get_thread_title,
     ingest_pdf,
     load_messages,
@@ -56,13 +57,17 @@ def drop_current_if_unused():
         st.session_state["chat_threads"].remove(current)
 
 
-def reset_chat():
-    if get_thread_title(st.session_state["thread_id"]) is None:
-        return  # already in an empty chat
+def start_new_chat():
     thread_id = generate_thread_id()
     st.session_state["thread_id"] = thread_id
     add_thread(thread_id)
     st.session_state["message_history"] = []
+
+
+def reset_chat():
+    if get_thread_title(st.session_state["thread_id"]) is None:
+        return  # already in an empty chat
+    start_new_chat()
 
 
 def open_thread(thread_id):
@@ -75,6 +80,16 @@ def open_thread(thread_id):
         role = "user" if isinstance(msg, HumanMessage) else "assistant"
         history.append({"role": role, "content": msg.text})
     st.session_state["message_history"] = history
+
+
+def remove_chat(thread_id):
+    delete_chat(thread_id)
+    chats = st.session_state["chat_threads"]
+    if thread_id in chats:
+        chats.remove(thread_id)
+    if thread_id == st.session_state["thread_id"]:
+        start_new_chat()  # the open chat was deleted: carry on in a fresh one
+    st.toast("Chat deleted")
 
 
 def stream_reply(user_input, config, status_holder):
@@ -244,7 +259,8 @@ current_chat.markdown(f"**Chat:** {thread_label(thread_key)}")
 
 with threads_box:
     for thread_id in st.session_state["chat_threads"]:
-        st.button(
+        chat_col, delete_col = st.columns([5, 1], vertical_alignment="center")
+        chat_col.button(
             thread_label(thread_id),
             key=f"thread-{thread_id}",
             on_click=open_thread,
@@ -252,3 +268,13 @@ with threads_box:
             type="primary" if thread_id == thread_key else "secondary",
             width="stretch",
         )
+        if get_thread_title(thread_id) is not None:  # an empty new chat has nothing to delete
+            with delete_col.popover("🗑️", key=f"delete-menu-{thread_id}", width="stretch"):
+                st.write("Delete this chat? Its messages and PDF are removed for good.")
+                st.button(
+                    "Delete",
+                    key=f"delete-{thread_id}",
+                    type="primary",
+                    on_click=remove_chat,
+                    args=(thread_id,),
+                )

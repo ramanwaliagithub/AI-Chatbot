@@ -7,6 +7,7 @@ A Streamlit chatbot built on [LangGraph](https://docs.langchain.com/oss/python/l
 - **Persistent chats**: multiple conversation threads, saved to SQLite and still there after a restart
 - **Welcome guide**: an empty chat opens with a short overview of what the chatbot can do (the text lives in `welcome.md`, so you can edit it without touching code)
 - **Named chats**: each chat is named from its first message (a short title written by the model) instead of showing an id
+- **Delete chats**: remove any saved chat from the sidebar, with a confirmation; its messages, name and PDF go with it
 - **Streaming replies** with a live "Using tool..." status while a tool runs
 - **Tools**: web search (DuckDuckGo), stock prices (Yahoo Finance via `yfinance`), calculator
 - **PDF Q&A (RAG)**: upload a PDF to a chat and ask questions about it
@@ -67,7 +68,7 @@ Each server is loaded on its own. The terminal running Streamlit prints `[MCP] L
 
 ## Using the app
 
-- Type in the chat box. Use **New Chat** to start a fresh thread; **Past conversations** in the sidebar lists your chats by name (the open one is highlighted) and reopens any of them. A new chat shows as "New chat" and opens with a welcome guide listing what the chatbot can do; the guide goes away once you send your first message, which also names the chat.
+- Type in the chat box. Use **New Chat** to start a fresh thread; **Past conversations** in the sidebar lists your chats by name (the open one is highlighted) and reopens any of them. A new chat shows as "New chat" and opens with a welcome guide listing what the chatbot can do; the guide goes away once you send your first message, which also names the chat. To delete a saved chat, click the 🗑️ next to it and confirm; its messages, name and PDF are removed for good.
 - Upload a PDF in the sidebar, then ask about it ("Summarise this document", "What does section 3 say about...?"). Each chat has its own PDF. A new upload replaces the previous one, and a scanned (image-only) PDF is rejected with a message.
 - Other things to try: *"What is the price of AAPL?"*, *"Price of RELIANCE.NS"* (use the Yahoo suffix for non-US exchanges), *"What is 12.5% of 840?"*, *"Search the web for the latest LangGraph release"*.
 
@@ -116,6 +117,7 @@ chatbot-in-langgraph/
 - **Provider-neutral message handling.** The frontend reads `message.text` rather than `message.content`, which works whether a model returns a plain string or a list of content blocks.
 - **Resilient MCP loading.** Servers are loaded one at a time, so one bad path or URL does not disable the rest, and the reason is printed.
 - **Chat names.** When a chat gets its first message, one short extra model call (cost: a few tokens) writes a title of at most five words. It runs in the background while the reply streams and is saved in a `thread_titles` table in `chatbot.db`. If that call fails, or for chats saved before this feature existed, the first message (shortened) is used as the name.
+- **Deleting a chat is complete.** It removes the chat's saved messages, its name, and its in-memory PDF index, and asks for confirmation first. The open chat can be deleted too; the app then moves to a fresh one.
 - **Stable database location.** `chatbot.db` is anchored to the backend file's folder, so every launch location uses the same history.
 - **Visible failures.** Model or network errors appear inline in the chat instead of crashing the page.
 - **Tool failures don't break a chat.** A tool that raises becomes an error message the model can read and react to, web search is retried once, and a tool call left without a result (for example by a cut-off run) is closed with an error before the history goes to the model, so one bad turn can never lock a chat.
@@ -138,7 +140,7 @@ chatbot-in-langgraph/
 ## Limitations
 
 - A PDF is indexed in memory: after the app restarts, your saved chats remain but you need to upload the PDF again. One PDF per chat.
-- Chats cannot be renamed or deleted from the UI yet.
+- Chats can be deleted from the UI but not renamed yet.
 - `yfinance` is an unofficial wrapper around Yahoo Finance for personal and educational use. Yahoo can rate-limit it or change without notice, and prices can be delayed or be the last close.
 - DuckDuckGo search can be rate-limited; retry later.
 - `langchain-community` is archived upstream. It is still used for the DuckDuckGo tool and the PDF loader and prints a deprecation warning at startup, which is harmless.

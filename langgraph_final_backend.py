@@ -453,3 +453,20 @@ def request_title(thread_id: str, first_message: str):
     """
     _TITLES[thread_id] = _fallback_title(first_message) or "New chat"
     return submit_async_task(_name_chat(thread_id, first_message))
+
+
+# -------------------
+# 10. Deleting a chat
+# -------------------
+async def _adelete_chat(thread_id: str):
+    await checkpointer.adelete_thread(thread_id)  # saved messages (checkpoints and writes)
+    await _titles_conn.execute("DELETE FROM thread_titles WHERE thread_id = ?", (thread_id,))
+    await _titles_conn.commit()
+
+
+def delete_chat(thread_id: str):
+    """Permanently remove a chat: its saved messages, its name and its PDF index."""
+    run_async(_adelete_chat(thread_id))
+    _TITLES.pop(thread_id, None)
+    _THREAD_RETRIEVERS.pop(str(thread_id), None)
+    _THREAD_METADATA.pop(str(thread_id), None)
