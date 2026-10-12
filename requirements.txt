@@ -1,0 +1,27 @@
+# Direct dependencies for the LangGraph chatbot. Tested on Python 3.13 / macOS (Apple Silicon).
+#
+# Setup:
+#   uv venv --python 3.13 .venv
+#   source .venv/bin/activate
+#   uv pip install -r requirements.txt
+
+# --- Graph + persistence ---
+langgraph>=1.2,<2
+langgraph-checkpoint-sqlite>=3.1,<4
+aiosqlite>=0.22,<1                # async SQLite access (chat history, chat names)
+
+# --- LangChain integrations ---
+langchain-core>=1.6,<2
+langchain-openai>=1.7,<2
+langchain-text-splitters>=1.1,<2
+langchain-mcp-adapters>=0.3,<0.4  # optional MCP tools
+langchain-community>=0.4,<0.5     # DuckDuckGo tool, PyPDFLoader (package is archived upstream)
+
+# --- Tools / RAG ---
+ddgs>=9,<10                       # required by DuckDuckGoSearchRun
+pypdf>=6,<7
+yfinance>=1.7,<2                  # stock prices via Yahoo Finance (unofficial, no API key)
+
+# --- App ---
+streamlit>=1.65,<2
+python-dotenv>=1.2,<2

@@ -1,0 +1,16 @@
+# Secrets and local data
+.env
+chatbot.db
+chatbot.db-*
+
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Local only: the original step-by-step versions, not published
+old_design/
