@@ -116,6 +116,7 @@ chatbot-in-langgraph/
 - **Chat names.** When a chat gets its first message, one short extra model call (cost: a few tokens) writes a title of at most five words. It runs in the background while the reply streams and is saved in a `thread_titles` table in `chatbot.db`. If that call fails, or for chats saved before this feature existed, the first message (shortened) is used as the name.
 - **Stable database location.** `chatbot.db` is anchored to the backend file's folder, so every launch location uses the same history.
 - **Visible failures.** Model or network errors appear inline in the chat instead of crashing the page.
+- **Tool failures don't break a chat.** A tool that raises becomes an error message the model can read and react to, web search is retried once, and a tool call left without a result (for example by a cut-off run) is closed with an error before the history goes to the model, so one bad turn can never lock a chat.
 
 ## Tech stack
 

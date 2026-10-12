@@ -22,7 +22,13 @@ import yfinance as yf
 from dotenv import load_dotenv
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.tools import DuckDuckGoSearchRun
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, tool
 from langchain_core.vectorstores import InMemoryVectorStore
@@ -124,7 +130,17 @@ def thread_document_metadata(thread_id: str) -> dict:
 # -------------------
 # 3. Tools
 # -------------------
-search_tool = DuckDuckGoSearchRun(region="us-en")
+class RetryingSearch(DuckDuckGoSearchRun):
+    """DuckDuckGo search that tries once more if it fails (its backends are flaky)."""
+
+    def _run(self, query: str, run_manager=None) -> str:
+        try:
+            return super()._run(query, run_manager=run_manager)
+        except Exception:
+            return super()._run(query, run_manager=run_manager)
+
+
+search_tool = RetryingSearch(region="us-en")
 
 
 @tool
@@ -263,14 +279,44 @@ SYSTEM_PROMPT = (
 )
 
 
+def _close_dangling_tool_calls(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """
+    The model API rejects a tool call that has no result message. That can be left behind
+    when a run is cut off between the call and its result, so give such a call an error
+    result. Only the copy sent to the model changes, not the saved chat.
+    """
+    fixed = []
+    for i, message in enumerate(messages):
+        fixed.append(message)
+        if isinstance(message, AIMessage) and message.tool_calls:
+            answered = set()
+            for later in messages[i + 1:]:
+                if not isinstance(later, ToolMessage):
+                    break
+                answered.add(later.tool_call_id)
+            for call in message.tool_calls:
+                if call["id"] not in answered:
+                    fixed.append(
+                        ToolMessage(
+                            content="Error: this tool call did not finish, so it has no result.",
+                            tool_call_id=call["id"],
+                            name=call["name"],
+                            status="error",
+                        )
+                    )
+    return fixed
+
+
 async def chat_node(state: ChatState, config: RunnableConfig):
     """LLM node that may answer or request a tool call."""
-    messages = [SystemMessage(content=SYSTEM_PROMPT), *state["messages"]]
+    messages = [SystemMessage(content=SYSTEM_PROMPT), *_close_dangling_tool_calls(state["messages"])]
     response = await llm_with_tools.ainvoke(messages, config=config)
     return {"messages": [response]}
 
 
-tool_node = ToolNode(tools)
+# A tool that raises becomes an error message the model can read and react to,
+# instead of aborting the whole run.
+tool_node = ToolNode(tools, handle_tool_errors=True)
 
 # -------------------
 # 6. Checkpointer
