@@ -1,5 +1,6 @@
 import queue
 import uuid
+from pathlib import Path
 
 import streamlit as st
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -9,6 +10,7 @@ from langgraph_final_backend import (
     get_thread_title,
     ingest_pdf,
     load_messages,
+    mcp_tools,
     request_title,
     retrieve_all_threads,
     submit_async_task,
@@ -25,6 +27,21 @@ def thread_label(thread_id):
     # A chat has no title until its first message is sent. "$" would start a LaTeX
     # expression in a button label, so it is escaped.
     return (get_thread_title(thread_id) or "New chat").replace("$", "\\$")
+
+
+WELCOME_FILE = Path(__file__).with_name("welcome.md")
+
+
+def show_welcome():
+    """The greeting shown in an empty chat. Its text lives in welcome.md."""
+    try:
+        text = WELCOME_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return  # no welcome file: just skip the greeting
+    with st.container(border=True):
+        st.markdown(text)
+        if mcp_tools:
+            st.caption("Extra tools connected via MCP: " + ", ".join(t.name for t in mcp_tools))
 
 
 def add_thread(thread_id):
@@ -167,12 +184,16 @@ threads_box = st.sidebar.container()  # filled in at the end, so a new chat's na
 # ============================ Main Layout ========================
 st.title("Multi Utility Chatbot")
 
+user_input = st.chat_input("Ask about your document or use tools")
+
+# Greeting in an empty chat; it goes away with the first message
+if not st.session_state["message_history"] and not user_input:
+    show_welcome()
+
 # Render history
 for message in st.session_state["message_history"]:
     with st.chat_message(message["role"]):
         st.text(message["content"])
-
-user_input = st.chat_input("Ask about your document or use tools")
 
 title_future = None
 

@@ -5,6 +5,7 @@ A Streamlit chatbot built on [LangGraph](https://docs.langchain.com/oss/python/l
 ## Features
 
 - **Persistent chats**: multiple conversation threads, saved to SQLite and still there after a restart
+- **Welcome guide**: an empty chat opens with a short overview of what the chatbot can do (the text lives in `welcome.md`, so you can edit it without touching code)
 - **Named chats**: each chat is named from its first message (a short title written by the model) instead of showing an id
 - **Streaming replies** with a live "Using tool..." status while a tool runs
 - **Tools**: web search (DuckDuckGo), stock prices (Yahoo Finance via `yfinance`), calculator
@@ -66,7 +67,7 @@ Each server is loaded on its own. The terminal running Streamlit prints `[MCP] L
 
 ## Using the app
 
-- Type in the chat box. Use **New Chat** to start a fresh thread; **Past conversations** in the sidebar lists your chats by name (the open one is highlighted) and reopens any of them. A new chat shows as "New chat" until you send its first message, which names it.
+- Type in the chat box. Use **New Chat** to start a fresh thread; **Past conversations** in the sidebar lists your chats by name (the open one is highlighted) and reopens any of them. A new chat shows as "New chat" and opens with a welcome guide listing what the chatbot can do; the guide goes away once you send your first message, which also names the chat.
 - Upload a PDF in the sidebar, then ask about it ("Summarise this document", "What does section 3 say about...?"). Each chat has its own PDF. A new upload replaces the previous one, and a scanned (image-only) PDF is rejected with a message.
 - Other things to try: *"What is the price of AAPL?"*, *"Price of RELIANCE.NS"* (use the Yahoo suffix for non-US exchanges), *"What is 12.5% of 840?"*, *"Search the web for the latest LangGraph release"*.
 
@@ -76,6 +77,7 @@ Each server is loaded on its own. The terminal running Streamlit prints `[MCP] L
 chatbot-in-langgraph/
 ├── streamlit_final_frontend.py    # UI: chat, sidebar, PDF upload, streaming
 ├── langgraph_final_backend.py     # graph, tools, RAG, MCP loading, persistence
+├── welcome.md                     # greeting shown in an empty chat (edit to change it)
 ├── requirements.txt               # direct dependencies
 ├── .env.example                   # template for your .env
 ├── .python-version                # Python 3.13
