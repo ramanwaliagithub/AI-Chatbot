@@ -121,6 +121,8 @@ def stream_reply(user_input, config, status_holder):
         # Lazily create & update the SAME status container when any tool runs
         if isinstance(payload, ToolMessage):
             tool_name = getattr(payload, "name", "tool")
+            if tool_name not in status_holder["tools"]:
+                status_holder["tools"].append(tool_name)
             if status_holder["box"] is None:
                 status_holder["box"] = st.status(f"🔧 Using `{tool_name}` …", expanded=True)
             else:
@@ -231,7 +233,7 @@ if user_input:
     # Assistant streaming block
     with st.chat_message("assistant"):
         # Use a mutable holder so the generator can set/modify it
-        status_holder = {"box": None}
+        status_holder = {"box": None, "tools": []}
 
         try:
             ai_message = st.write_stream(stream_reply(user_input, CONFIG, status_holder))
@@ -240,8 +242,9 @@ if user_input:
         else:
             # Finalize only if a tool was actually used
             if status_holder["box"] is not None:
+                used = ", ".join(f"`{name}`" for name in status_holder["tools"])
                 status_holder["box"].update(
-                    label="✅ Tool finished", state="complete", expanded=False
+                    label=f"✅ Used {used}", state="complete", expanded=False
                 )
             if ai_message:
                 st.session_state["message_history"].append(
@@ -270,7 +273,7 @@ with threads_box:
         )
         if get_thread_title(thread_id) is not None:  # an empty new chat has nothing to delete
             with delete_col.popover("🗑️", key=f"delete-menu-{thread_id}", width="stretch"):
-                st.write("Delete this chat? Its messages and PDF are removed for good.")
+                st.write("Delete this chat? Its messages and PDF will be removed permanently.")
                 st.button(
                     "Delete",
                     key=f"delete-{thread_id}",

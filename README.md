@@ -10,7 +10,7 @@ A Streamlit chatbot built on [LangGraph](https://docs.langchain.com/oss/python/l
 - **Delete chats**: remove any saved chat from the sidebar, with a confirmation; its messages, name and PDF go with it
 - **Streaming replies** with a live "Using tool..." status while a tool runs
 - **Tools**: web search (DuckDuckGo), stock prices (Yahoo Finance via `yfinance`), calculator
-- **PDF Q&A (RAG)**: upload a PDF to a chat and ask questions about it
+- **PDF Q&A (RAG)**: upload a PDF to a chat and ask questions about it; the PDF is saved with the chat, so it is still there after a restart
 - **Optional MCP tools**: add servers in one dictionary; a broken server is skipped, not fatal
 - **Optional LangSmith tracing**
 
@@ -82,7 +82,7 @@ chatbot-in-langgraph/
 ├── requirements.txt               # direct dependencies
 ├── .env.example                   # template for your .env
 ├── .python-version                # Python 3.13
-└── chatbot.db                     # SQLite: chat history and chat names (created on first run, git-ignored)
+└── chatbot.db                     # SQLite: chat history, chat names and saved PDFs (created on first run, git-ignored)
 ```
 
 ## How it works
@@ -113,11 +113,11 @@ chatbot-in-langgraph/
 **Design decisions**
 
 - **Async graph on a background event loop.** Streamlit scripts are synchronous and rerun on every interaction, while the graph, the SQLite saver, and MCP tools are async. The backend therefore starts one long-lived event loop in a daemon thread; the frontend schedules work on it and bridges results through a `queue.Queue` into `st.write_stream`.
-- **PDF Q&A is per thread.** Upload, then PyPDF extracts text, which is split (1000 characters, 200 overlap), embedded with `text-embedding-3-small`, and stored in an in-memory vector store; the top 4 chunks are retrieved per question. `rag_tool` reads the thread id from the run config rather than from a model-supplied argument, so it cannot search another chat's document.
+- **PDF Q&A is per thread.** Upload, then PyPDF extracts text, which is split (1000 characters, 200 overlap), embedded with `text-embedding-3-small`, and saved in the database (tables `pdf_documents` and `pdf_chunks`: each chunk's text and embedding). Searching uses an in-memory index that is rebuilt from the saved rows the first time a chat's PDF is used after a restart, so nothing is uploaded or embedded again; the top 4 chunks are retrieved per question. PDFs saved with a different embedding model are ignored (upload again). `rag_tool` reads the thread id from the run config rather than from a model-supplied argument, so it cannot search another chat's document. The model's instructions are rebuilt every turn: when a PDF is attached to the chat, it is told the file name and to check the document before searching the web.
 - **Provider-neutral message handling.** The frontend reads `message.text` rather than `message.content`, which works whether a model returns a plain string or a list of content blocks.
 - **Resilient MCP loading.** Servers are loaded one at a time, so one bad path or URL does not disable the rest, and the reason is printed.
 - **Chat names.** When a chat gets its first message, one short extra model call (cost: a few tokens) writes a title of at most five words. It runs in the background while the reply streams and is saved in a `thread_titles` table in `chatbot.db`. If that call fails, or for chats saved before this feature existed, the first message (shortened) is used as the name.
-- **Deleting a chat is complete.** It removes the chat's saved messages, its name, and its in-memory PDF index, and asks for confirmation first. The open chat can be deleted too; the app then moves to a fresh one.
+- **Deleting a chat is complete.** It removes the chat's saved messages, its name, and its saved PDF, and asks for confirmation first. The open chat can be deleted too; the app then moves to a fresh one.
 - **Stable database location.** `chatbot.db` is anchored to the backend file's folder, so every launch location uses the same history.
 - **Visible failures.** Model or network errors appear inline in the chat instead of crashing the page.
 - **Tool failures don't break a chat.** A tool that raises becomes an error message the model can read and react to, web search is retried once, and a tool call left without a result (for example by a cut-off run) is closed with an error before the history goes to the model, so one bad turn can never lock a chat.
@@ -139,7 +139,7 @@ chatbot-in-langgraph/
 
 ## Limitations
 
-- A PDF is indexed in memory: after the app restarts, your saved chats remain but you need to upload the PDF again. One PDF per chat.
+- One PDF per chat; a new upload replaces the previous one. Uploaded PDFs are stored as text in `chatbot.db`, so anyone with access to that file can read them. Deleting a chat removes its PDF.
 - Chats can be deleted from the UI but not renamed yet.
 - `yfinance` is an unofficial wrapper around Yahoo Finance for personal and educational use. Yahoo can rate-limit it or change without notice, and prices can be delayed or be the last close.
 - DuckDuckGo search can be rate-limited; retry later.

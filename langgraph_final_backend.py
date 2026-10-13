@@ -4,7 +4,8 @@ Final LangGraph chatbot backend.
 What it provides:
   - async graph (runs on a dedicated background event loop) with AsyncSqliteSaver persistence
   - tools: web search, stock price (yfinance), calculator
-  - PDF question answering (RAG), one PDF per chat thread
+  - PDF question answering (RAG), one PDF per chat thread, saved in the database so it
+    survives restarts
   - optional MCP tools (see MCP_SERVERS)
   - short chat titles, written by the model from the first message and saved in the database
 
@@ -12,9 +13,11 @@ Settings come from .env: OPENAI_API_KEY (required), OPENAI_MODEL (optional).
 """
 
 import asyncio
+import json
 import os
 import tempfile
 import threading
+from array import array
 from typing import Annotated, Any, Dict, Optional, TypedDict
 
 import aiosqlite
@@ -65,10 +68,11 @@ def submit_async_task(coro):
 # 1. LLM + embeddings
 # -------------------
 llm = ChatOpenAI(model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"))
-embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+EMBEDDING_MODEL = "text-embedding-3-small"
+embeddings = OpenAIEmbeddings(model=EMBEDDING_MODEL)
 
 # -------------------
-# 2. PDF retriever store (per thread)
+# 2. PDFs (one per thread, saved in the database)
 # -------------------
 _THREAD_RETRIEVERS: Dict[str, Any] = {}
 _THREAD_METADATA: Dict[str, dict] = {}
@@ -104,15 +108,18 @@ def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None
                 "No readable text found in this PDF. It may be a scanned or image-only file."
             )
 
-        vector_store = InMemoryVectorStore.from_documents(chunks, embeddings)
-        _THREAD_RETRIEVERS[str(thread_id)] = vector_store.as_retriever(
-            search_type="similarity", search_kwargs={"k": 4}
-        )
+        texts = [chunk.page_content for chunk in chunks]
+        metadatas = [chunk.metadata for chunk in chunks]
+        vectors = embeddings.embed_documents(texts)
         summary = {"filename": name, "documents": len(docs), "chunks": len(chunks)}
+
+        # Saved in the database first, so the chat keeps its PDF across restarts.
+        run_async(_save_pdf(str(thread_id), summary, texts, metadatas, vectors))
+        _THREAD_RETRIEVERS[str(thread_id)] = _retriever_from_chunks(texts, metadatas, vectors)
         _THREAD_METADATA[str(thread_id)] = summary
         return dict(summary)
     finally:
-        # The vector store keeps copies of the text, so the temp file is safe to remove.
+        # The chunks are saved in the database, so the temp file is safe to remove.
         try:
             os.remove(temp_path)
         except OSError:
@@ -120,11 +127,41 @@ def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None
 
 
 def thread_has_document(thread_id: str) -> bool:
-    return str(thread_id) in _THREAD_RETRIEVERS
+    return str(thread_id) in _THREAD_METADATA
 
 
 def thread_document_metadata(thread_id: str) -> dict:
     return dict(_THREAD_METADATA.get(str(thread_id), {}))
+
+
+def _retriever_from_chunks(texts, metadatas, vectors):
+    """A search index over chunks that already have their embeddings (nothing is re-embedded)."""
+    store = InMemoryVectorStore(embeddings)
+    for i, (text, metadata, vector) in enumerate(zip(texts, metadatas, vectors)):
+        store.store[str(i)] = {"id": str(i), "vector": vector, "text": text, "metadata": metadata}
+    return store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+
+
+async def _aget_retriever(thread_id: str):
+    """The chat's search index. After a restart it is rebuilt from the saved chunks on first use."""
+    retriever = _THREAD_RETRIEVERS.get(thread_id)
+    if retriever is None and thread_id in _THREAD_METADATA:
+        async with _app_conn.execute(
+            "SELECT text, metadata, embedding FROM pdf_chunks WHERE thread_id = ? ORDER BY chunk_index",
+            (thread_id,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        if rows:
+            vectors = []
+            for _, _, blob in rows:
+                vector = array("f")
+                vector.frombytes(blob)
+                vectors.append(vector.tolist())
+            retriever = _retriever_from_chunks(
+                [row[0] for row in rows], [json.loads(row[1]) for row in rows], vectors
+            )
+            _THREAD_RETRIEVERS[thread_id] = retriever
+    return retriever
 
 
 # -------------------
@@ -204,11 +241,12 @@ def get_stock_price(symbol: str) -> dict:
 @tool
 async def rag_tool(query: str, config: RunnableConfig) -> dict:
     """
-    Retrieve relevant information from the PDF uploaded to this chat.
+    Search the PDF the user uploaded to this chat. Use this first for any question the
+    uploaded document might answer, even when the user does not mention the PDF.
     """
     # The thread id comes from the run config, not from the model.
     thread_id = str(config.get("configurable", {}).get("thread_id"))
-    retriever = _THREAD_RETRIEVERS.get(thread_id)
+    retriever = await _aget_retriever(thread_id)
     if retriever is None:
         return {
             "error": "No document indexed for this chat. Upload a PDF first.",
@@ -272,11 +310,27 @@ class ChatState(TypedDict):
 # -------------------
 # 5. Nodes
 # -------------------
-SYSTEM_PROMPT = (
-    "You are a helpful assistant. For questions about the uploaded PDF, call the "
-    "`rag_tool`. You can also use the web search, stock price, and calculator tools "
-    "when helpful. If no document is available, ask the user to upload a PDF."
+BASE_PROMPT = (
+    "You are a helpful assistant. You can search the web, look up stock prices and do "
+    "calculations when that helps."
 )
+
+
+def _system_prompt(thread_id: str) -> str:
+    """The model's instructions, which depend on whether this chat has a PDF attached."""
+    doc = _THREAD_METADATA.get(thread_id)
+    if doc:
+        return (
+            f"{BASE_PROMPT} The user has uploaded a PDF to this chat: '{doc['filename']}' "
+            f"({doc['documents']} pages). For any question the document could answer, even if "
+            "the user does not mention it, call `rag_tool` first and answer from what it "
+            "returns. Search the web only if the document does not cover the question, and "
+            "say which source your answer came from."
+        )
+    return (
+        f"{BASE_PROMPT} No PDF has been uploaded to this chat; if the user asks about a "
+        "document, ask them to upload a PDF."
+    )
 
 
 def _close_dangling_tool_calls(messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -309,7 +363,11 @@ def _close_dangling_tool_calls(messages: list[BaseMessage]) -> list[BaseMessage]
 
 async def chat_node(state: ChatState, config: RunnableConfig):
     """LLM node that may answer or request a tool call."""
-    messages = [SystemMessage(content=SYSTEM_PROMPT), *_close_dangling_tool_calls(state["messages"])]
+    thread_id = str(config.get("configurable", {}).get("thread_id"))
+    messages = [
+        SystemMessage(content=_system_prompt(thread_id)),
+        *_close_dangling_tool_calls(state["messages"]),
+    ]
     response = await llm_with_tools.ainvoke(messages, config=config)
     return {"messages": [response]}
 
@@ -387,27 +445,81 @@ def _fallback_title(text: str, limit: int = 40) -> str:
     return text[:limit].rsplit(" ", 1)[0] + "…"
 
 
-async def _init_titles():
+_app_lock = asyncio.Lock()  # our own tables are written one operation at a time
+
+
+async def _init_tables():
+    """
+    Open our own tables in the chat database (chat names, plus the PDFs saved for each chat:
+    `pdf_documents` holds the file details, `pdf_chunks` the text and embedding of each chunk)
+    and load the names and file details into memory.
+    """
     conn = await aiosqlite.connect(database=DB_PATH)
     await conn.execute(
         "CREATE TABLE IF NOT EXISTS thread_titles (thread_id TEXT PRIMARY KEY, title TEXT NOT NULL)"
     )
+    await conn.execute(
+        "CREATE TABLE IF NOT EXISTS pdf_documents (thread_id TEXT PRIMARY KEY, filename TEXT NOT NULL, "
+        "documents INTEGER NOT NULL, chunks INTEGER NOT NULL, embedding_model TEXT NOT NULL)"
+    )
+    await conn.execute(
+        "CREATE TABLE IF NOT EXISTS pdf_chunks (thread_id TEXT NOT NULL, chunk_index INTEGER NOT NULL, "
+        "text TEXT NOT NULL, metadata TEXT NOT NULL, embedding BLOB NOT NULL, "
+        "PRIMARY KEY (thread_id, chunk_index))"
+    )
     await conn.commit()
     async with conn.execute("SELECT thread_id, title FROM thread_titles") as cursor:
         _TITLES.update({thread_id: title for thread_id, title in await cursor.fetchall()})
+    # A PDF embedded with a different model can't be searched with today's embeddings, so skip it.
+    async with conn.execute(
+        "SELECT thread_id, filename, documents, chunks FROM pdf_documents WHERE embedding_model = ?",
+        (EMBEDDING_MODEL,),
+    ) as cursor:
+        for thread_id, filename, documents, chunks in await cursor.fetchall():
+            _THREAD_METADATA[thread_id] = {
+                "filename": filename,
+                "documents": documents,
+                "chunks": chunks,
+            }
     return conn
 
 
-_titles_conn = run_async(_init_titles())
+_app_conn = run_async(_init_tables())
 
 
 async def _save_title(thread_id: str, title: str):
-    await _titles_conn.execute(
-        "INSERT OR REPLACE INTO thread_titles (thread_id, title) VALUES (?, ?)",
-        (thread_id, title),
-    )
-    await _titles_conn.commit()
+    async with _app_lock:
+        await _app_conn.execute(
+            "INSERT OR REPLACE INTO thread_titles (thread_id, title) VALUES (?, ?)",
+            (thread_id, title),
+        )
+        await _app_conn.commit()
     _TITLES[thread_id] = title
+
+
+async def _save_pdf(thread_id: str, summary: dict, texts, metadatas, vectors):
+    """Save a chat's PDF (replacing its previous one) so it survives a restart."""
+    rows = [
+        (thread_id, i, text, json.dumps(metadata, default=str), array("f", vector).tobytes())
+        for i, (text, metadata, vector) in enumerate(zip(texts, metadatas, vectors))
+    ]
+    async with _app_lock:
+        try:
+            await _app_conn.execute("DELETE FROM pdf_chunks WHERE thread_id = ?", (thread_id,))
+            await _app_conn.execute(
+                "INSERT OR REPLACE INTO pdf_documents "
+                "(thread_id, filename, documents, chunks, embedding_model) VALUES (?, ?, ?, ?, ?)",
+                (thread_id, summary["filename"], summary["documents"], summary["chunks"], EMBEDDING_MODEL),
+            )
+            await _app_conn.executemany(
+                "INSERT INTO pdf_chunks (thread_id, chunk_index, text, metadata, embedding) "
+                "VALUES (?, ?, ?, ?, ?)",
+                rows,
+            )
+            await _app_conn.commit()
+        except Exception:
+            await _app_conn.rollback()  # leave the previous PDF untouched
+            raise
 
 
 async def _name_chat(thread_id: str, first_message: str) -> str:
@@ -460,12 +572,15 @@ def request_title(thread_id: str, first_message: str):
 # -------------------
 async def _adelete_chat(thread_id: str):
     await checkpointer.adelete_thread(thread_id)  # saved messages (checkpoints and writes)
-    await _titles_conn.execute("DELETE FROM thread_titles WHERE thread_id = ?", (thread_id,))
-    await _titles_conn.commit()
+    async with _app_lock:
+        await _app_conn.execute("DELETE FROM thread_titles WHERE thread_id = ?", (thread_id,))
+        await _app_conn.execute("DELETE FROM pdf_chunks WHERE thread_id = ?", (thread_id,))
+        await _app_conn.execute("DELETE FROM pdf_documents WHERE thread_id = ?", (thread_id,))
+        await _app_conn.commit()
 
 
 def delete_chat(thread_id: str):
-    """Permanently remove a chat: its saved messages, its name and its PDF index."""
+    """Permanently remove a chat: its saved messages, its name and its saved PDF."""
     run_async(_adelete_chat(thread_id))
     _TITLES.pop(thread_id, None)
     _THREAD_RETRIEVERS.pop(str(thread_id), None)
