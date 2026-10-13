@@ -1,0 +1,26 @@
+# A local Postgres with the pgvector extension, for the Postgres version of the chatbot.
+#
+#   docker compose up -d          start it (the data is kept in the "chatbot_pgdata" volume)
+#   docker compose down           stop it (add -v to also delete the data)
+#
+# The database is then at postgresql://chatbot:chatbot@localhost:5433/chatbot
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: chatbot-postgres
+    environment:
+      POSTGRES_USER: chatbot
+      POSTGRES_PASSWORD: chatbot   # development only: use a strong password for anything shared or online
+      POSTGRES_DB: chatbot
+    ports:
+      - "5433:5432"   # 5433, so it does not clash with a Postgres you may already run on 5432
+    volumes:
+      - chatbot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatbot -d chatbot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  chatbot_pgdata:

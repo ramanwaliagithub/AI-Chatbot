@@ -79,6 +79,7 @@ chatbot-in-langgraph/
 ├── streamlit_final_frontend.py    # UI: chat, sidebar, PDF upload, streaming
 ├── langgraph_final_backend.py     # graph, tools, RAG, MCP loading, persistence
 ├── welcome.md                     # greeting shown in an empty chat (edit to change it)
+├── postgres_version/              # a separate Postgres + pgvector version with a per-user data model
 ├── requirements.txt               # direct dependencies
 ├── .env.example                   # template for your .env
 ├── .python-version                # Python 3.13
@@ -136,6 +137,10 @@ chatbot-in-langgraph/
 | Stock prices | `yfinance` 1.7 | Latest price from Yahoo Finance, no key |
 | MCP | `langchain-mcp-adapters` 0.3 | Load tools from MCP servers |
 | Config | `python-dotenv` 1.2 | Read `.env` |
+
+## Postgres + pgvector version
+
+[`postgres_version/`](postgres_version/README.md) is a separate implementation of the same chatbot that keeps everything in Postgres (chat history, the chat list, and PDF vectors in pgvector) with a per-user data model. It has its own frontend, backend, requirements and Docker setup, so you can run it next to this SQLite version and compare them.
 
 ## Limitations
 

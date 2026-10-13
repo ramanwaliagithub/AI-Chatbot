@@ -1,0 +1,26 @@
+# Dependencies of the Postgres + pgvector version. Standalone: it does not need the SQLite version's packages.
+# Setup (from this folder):
+#   uv venv --python 3.13 .venv && source .venv/bin/activate
+#   uv pip install -r requirements.txt
+
+# --- Graph + Postgres ---
+langgraph>=1.2,<2
+langgraph-checkpoint-postgres>=3.1,<4   # chat history in Postgres
+psycopg[binary,pool]>=3.3,<4            # Postgres driver and connection pool
+pgvector>=0.5,<1                        # pgvector type support for psycopg
+
+# --- LangChain integrations ---
+langchain-core>=1.6,<2
+langchain-openai>=1.7,<2
+langchain-text-splitters>=1.1,<2
+langchain-mcp-adapters>=0.3,<0.4        # optional MCP tools
+langchain-community>=0.4,<0.5           # DuckDuckGo tool, PyPDFLoader (package is archived upstream)
+
+# --- Tools / PDFs ---
+ddgs>=9,<10                             # required by DuckDuckGoSearchRun
+pypdf>=6,<7
+yfinance>=1.7,<2                        # stock prices via Yahoo Finance (unofficial, no API key)
+
+# --- App ---
+streamlit>=1.65,<2
+python-dotenv>=1.2,<2
